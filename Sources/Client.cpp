@@ -1,50 +1,130 @@
 #include "Client.h"
+#include <Winsock2.h>
 #include <iostream>
+#include <thread>
+#include <Ws2tcpip.h>
+#include "Buffer.h"
+#include "Protocol.h"
 
-Client::Client() {
+#pragma comment(lib, "Ws2_32.lib")
+
+// Constructor
+Client::Client(const std::string& serverAddress, int serverPort)
+    : serverAddress_(serverAddress), serverPort_(serverPort), sockfd_(-1) {
     // Initialize Winsock
-    int iResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
-    if (iResult != 0) {
-        std::cerr << "WSAStartup failed: " << iResult << std::endl;
-        exit(1);
+    WSADATA wsaData;
+    if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
+        std::cerr << "WSAStartup failed: " << WSAGetLastError() << std::endl;
     }
 }
 
+// Destructor
 Client::~Client() {
+    Disconnect();
     WSACleanup();
 }
 
-void Client::connect_to_server() {
-    struct sockaddr_in serv_addr;
-    if ((sock = socket(AF_INET, SOCK_STREAM, 0)) == INVALID_SOCKET) {
-        std::cerr << "Socket creation failed: " << WSAGetLastError() << std::endl;
-        WSACleanup();
-        exit(1);
-    }
-    serv_addr.sin_family = AF_INET;
-    serv_addr.sin_port = htons(8080);  // Assuming server is on port 8080
-
-    // Convert IPv4 and IPv6 addresses from text to binary form
-    if (inet_pton(AF_INET, "127.0.0.1", &serv_addr.sin_addr) <= 0) {
-        std::cerr << "Invalid address/ Address not supported" << std::endl;
-        closesocket(sock);
-        WSACleanup();
-        exit(1);
+// Connect to the server
+bool Client::Connect() {
+    Disconnect();
+    sockfd_ = socket(AF_INET, SOCK_STREAM, 0);
+    if (sockfd_ == INVALID_SOCKET) {
+        return false;
     }
 
-    if (connect(sock, (struct sockaddr*)&serv_addr, sizeof(serv_addr)) < 0) {
-        std::cerr << "Connection Failed: " << WSAGetLastError() << std::endl;
-        closesocket(sock);
-        WSACleanup();
-        exit(1);
+    sockaddr_in serverAddr;
+    serverAddr.sin_family = AF_INET;
+    serverAddr.sin_port = htons(serverPort_);
+    inet_pton(AF_INET, serverAddress_.c_str(), &serverAddr.sin_addr);
+
+    if (connect(sockfd_, (struct sockaddr*)&serverAddr, sizeof(serverAddr)) == SOCKET_ERROR) {
+        return false;
     }
 
-    // Example sending and receiving with the server
-    const char* hello = "Hello from client";
-    send(sock, hello, strlen(hello), 0);
-    std::cout << "Hello message sent" << std::endl;
-    char buffer[1024] = { 0 };
-    int valread = recv(sock, buffer, 1024, 0);
-    std::cout << buffer << std::endl;
-    closesocket(sock);  // Don't forget to close the socket once done
+    return true;
+}
+
+// Disconnect from the server
+void Client::Disconnect() {
+    if (sockfd_ != INVALID_SOCKET) {
+        closesocket(sockfd_);
+        sockfd_ = INVALID_SOCKET;
+    }
+}
+
+// Send data to the server
+bool Client::SendData(const std::string& data) {
+    if (sockfd_ == INVALID_SOCKET) {
+        return false;
+    }
+
+    std::string dataWithNewline = data + '\n'; // Add a newline character at the end
+
+    if (send(sockfd_, dataWithNewline.c_str(), static_cast<int>(dataWithNewline.size()), 0) == -1) {
+        return false;
+    }
+
+    return true;
+}
+
+// Receive data from the server
+std::string Client::ReceiveData() {
+    char buffer[257]; // One more byte for null-termination
+    int bytesReceived = recv(sockfd_, buffer, sizeof(buffer) - 1, 0); // Save room for null-terminator
+
+    if (bytesReceived <= 0) {
+        return "";
+    }
+
+    buffer[bytesReceived] = '\0'; // Null-terminate the string
+    return std::string(buffer);
+}
+
+// Join a room on the server
+bool Client::JoinRoom(const std::string& roomName) {
+    Buffer buffer(256);
+    buffer.SerializeString("JOIN");
+    buffer.SerializeString(roomName);
+
+    std::vector<char> vecData = buffer.GetData();
+    const char* dataToSend = vecData.data(); // Get the pointer to the data
+
+    if (SendData(dataToSend)) {
+        return true;
+    }
+
+    return false;
+}
+
+// Leave a room on the server
+bool Client::LeaveRoom(const std::string& roomName) {
+    Buffer buffer(256);
+    buffer.SerializeString("LEAVE");
+    buffer.SerializeString(roomName);
+
+    std::vector<char> dataVector = buffer.GetData();  // Get the data as a vector
+    const char* dataToSend = dataVector.data();       // Convert vector data to const char*
+
+    if (SendData(dataToSend)) {
+        return true;
+    }
+
+    return false;
+}
+
+// Send a message to a room on the server
+bool Client::SendMessageToRoom(const std::string& roomName, const std::string& message) {
+    Buffer buffer(256);
+    buffer.SerializeString("MESSAGE");
+    buffer.SerializeString(roomName);
+    buffer.SerializeString(message);
+
+    std::vector<char> dataVector = buffer.GetData();  // Get the data as a vector
+    const char* dataToSend = dataVector.data();       // Convert vector data to const char*
+
+    if (SendData(dataToSend)) {
+        return true;
+    }
+
+    return false;
 }

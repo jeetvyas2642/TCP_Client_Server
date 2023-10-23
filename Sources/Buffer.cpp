@@ -1,70 +1,84 @@
 #include "Buffer.h"
 #include <stdexcept>
+#include <cstring>
+#include <WinSock2.h>
 
-Buffer::Buffer(size_t size) : data_(new char[size]), size_(size), write_index_(0) {
-    // ...
+Buffer::Buffer(std::size_t size)
+    : buffer_(size), writeIndex_(0), readIndex_(0) {}
+
+void Buffer::Grow() {
+    buffer_.resize(buffer_.size() * 2);
 }
 
-Buffer::~Buffer() {  // Defining destructor here
-    delete[] data_;
+void Buffer::SerializeUInt32(unsigned int value) {
+    if (writeIndex_ + 4 > buffer_.size()) {
+        Grow();
+    }
+
+    // Convert the value to network byte order (big-endian)
+    value = htonl(value);
+    std::memcpy(&buffer_[writeIndex_], &value, 4);
+    writeIndex_ += 4;
 }
 
-size_t Buffer::size() const {
-    return write_index_;  // Return the write index as the current size of the buffer
+unsigned int Buffer::DeserializeUInt32() {
+    if (readIndex_ + 4 > buffer_.size()) {
+        throw std::runtime_error("Buffer underflow");
+    }
+
+    unsigned int value;
+    std::memcpy(&value, &buffer_[readIndex_], 4);
+    readIndex_ += 4;
+
+    // Convert the value from network byte order (big-endian) to host byte order
+    return ntohl(value);
 }
 
-char* Buffer::data() {
-    return data_;  // Return the data pointer
+void Buffer::SerializeUInt16(unsigned short value) {
+    if (writeIndex_ + 2 > buffer_.size()) {
+        Grow();
+    }
+
+    // Convert the value to network byte order (big-endian)
+    value = htons(value);
+    std::memcpy(&buffer_[writeIndex_], &value, 2);
+    writeIndex_ += 2;
 }
 
-void Buffer::grow(size_t new_size) {
-    char* new_data = new char[new_size];
-    memcpy(new_data, data_, size_);
-    delete[] data_;
-    data_ = new_data;
-    size_ = new_size;
+unsigned short Buffer::DeserializeUInt16() {
+    if (readIndex_ + 2 > buffer_.size()) {
+        throw std::runtime_error("Buffer underflow");
+    }
+
+    unsigned short value;
+    std::memcpy(&value, &buffer_[readIndex_], 2);
+    readIndex_ += 2;
+
+    // Convert the value from network byte order (big-endian) to host byte order
+    return ntohs(value);
 }
 
-void Buffer::serialize_uint32(uint32_t value) {
-    if (write_index_ + 4 > size_) grow(size_ * 2);
-    data_[write_index_++] = (value >> 24) & 0xFF;
-    data_[write_index_++] = (value >> 16) & 0xFF;
-    data_[write_index_++] = (value >> 8) & 0xFF;
-    data_[write_index_++] = value & 0xFF;
+void Buffer::SerializeString(const std::string& value) {
+    auto length = static_cast<unsigned int>(value.size());
+    SerializeUInt32(length);
+
+    if (writeIndex_ + length > buffer_.size()) {
+        Grow();
+    }
+
+    std::memcpy(&buffer_[writeIndex_], value.data(), length);
+    writeIndex_ += length;
 }
 
-uint32_t Buffer::deserialize_uint32() {
-    if (write_index_ + 4 > size_) throw std::runtime_error("Not enough data");
-    uint32_t value = (static_cast<uint32_t>(data_[write_index_++]) << 24) |
-        (static_cast<uint32_t>(data_[write_index_++]) << 16) |
-        (static_cast<uint32_t>(data_[write_index_++]) << 8) |
-        static_cast<uint32_t>(data_[write_index_++]);
-    return value;
-}
+std::string Buffer::DeserializeString() {
+    auto length = DeserializeUInt32();
 
-void Buffer::serialize_uint16(uint16_t value) {
-    if (write_index_ + 2 > size_) grow(size_ * 2);
-    data_[write_index_++] = (value >> 8) & 0xFF;
-    data_[write_index_++] = value & 0xFF;
-}
+    if (readIndex_ + length > buffer_.size()) {
+        throw std::runtime_error("Buffer underflow");
+    }
 
-uint16_t Buffer::deserialize_uint16() {
-    if (write_index_ + 2 > size_) throw std::runtime_error("Not enough data");
-    uint16_t value = (static_cast<uint16_t>(data_[write_index_++]) << 8) |
-        static_cast<uint16_t>(data_[write_index_++]);
-    return value;
-}
+    std::string value(&buffer_[readIndex_], length);
+    readIndex_ += length;
 
-void Buffer::serialize_string(const std::string& value) {
-    size_t length = value.length();
-    if (write_index_ + length > size_) grow(size_ + length);
-    memcpy(data_ + write_index_, value.data(), length);
-    write_index_ += length;
-}
-
-std::string Buffer::deserialize_string(size_t length) {
-    if (write_index_ + length > size_) throw std::runtime_error("Not enough data");
-    std::string value(data_ + write_index_, length);
-    write_index_ += length;
     return value;
 }

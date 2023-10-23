@@ -1,19 +1,31 @@
 #include "Protocol.h"
+#include <algorithm>
+#include <WinSock2.h>
 
-void Protocol::send_message(SOCKET socket, const std::string& message) {
-    uint32_t length = message.length();
-    buffer_.serialize_uint32(length);
-    buffer_.serialize_string(message);
-    send(socket, buffer_.data(), buffer_.size(), 0);
+// Serialize a message into a vector of characters
+std::vector<char> Protocol::SerializeMessage(const std::string& message) {
+    // Calculate the message length and convert it to big-endian
+    uint32_t messageLength = static_cast<uint32_t>(message.size());
+    uint32_t messageLengthBE = htonl(messageLength);
+
+    // Create a Buffer with the default size
+    Buffer buffer;
+    buffer.SerializeUInt32(messageLengthBE); // Serialize the message length in big-endian
+    buffer.SerializeString(message); // Serialize the message content
+
+    return buffer.GetData(); // Return the serialized data as a vector of characters
 }
 
-std::string Protocol::receive_message(SOCKET socket) {
-    char lengthBuffer[4];
-    recv(socket, lengthBuffer, 4, 0);
-    uint32_t length = *(uint32_t*)lengthBuffer;
-    char* messageBuffer = new char[length];
-    recv(socket, messageBuffer, length, 0);
-    std::string message(messageBuffer, length);
-    delete[] messageBuffer;
-    return message;
+// Deserialize a message from a Buffer
+std::string Protocol::DeserializeMessage(Buffer& buffer) {
+    // Deserialize the message length in big-endian
+    uint32_t messageLengthBE = buffer.DeserializeUInt32();
+
+    // Convert the message length to host byte order
+    uint32_t messageLength = ntohl(messageLengthBE);
+
+    // Deserialize the message content
+    std::string message = buffer.DeserializeString();
+
+    return message; // Return the deserialized message
 }

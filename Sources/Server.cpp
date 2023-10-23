@@ -1,83 +1,125 @@
 #include "Server.h"
 #include <iostream>
 #include <thread>
-#include <WS2tcpip.h>
+#include <WinSock2.h>
+#include <Ws2tcpip.h>
+#include <vector>
 
-#pragma comment(lib, "Ws2_32.lib")
+// Constructor for the Server class
+Server::Server(int port) : port_(port), sockfd_(INVALID_SOCKET) {}
 
-Server::Server() {
+// Destructor for the Server class
+Server::~Server() {
+    if (sockfd_ != INVALID_SOCKET) {
+        closesocket(sockfd_);
+    }
+}
+
+// Start the server
+void Server::Start() {
     WSADATA wsaData;
     int iResult = WSAStartup(MAKEWORD(2, 2), &wsaData);
     if (iResult != 0) {
-        std::cerr << "WSAStartup failed: " << iResult << std::endl;
-        exit(EXIT_FAILURE);
+        std::cerr << "WSAStartup failed: " << iResult << "\n";
+        return;
     }
-}
 
-Server::~Server() {
-    WSACleanup();
-}
-
-void Server::start() {
-    struct addrinfo* result = NULL, hints = {};
-    hints.ai_family = AF_INET;
-    hints.ai_socktype = SOCK_STREAM;
-    hints.ai_protocol = IPPROTO_TCP;
-    hints.ai_flags = AI_PASSIVE;
-
-    int iResult = getaddrinfo(NULL, "8080", &hints, &result);
-    if (iResult != 0) {
-        std::cerr << "getaddrinfo failed: " << iResult << std::endl;
+    sockfd_ = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (sockfd_ == INVALID_SOCKET) {
+        std::cerr << "Could not create socket: " << WSAGetLastError() << "\n";
         WSACleanup();
-        exit(EXIT_FAILURE);
+        return;
     }
 
-    server_socket = socket(result->ai_family, result->ai_socktype, result->ai_protocol);
-    if (server_socket == INVALID_SOCKET) {
-        std::cerr << "socket failed: " << WSAGetLastError() << std::endl;
-        freeaddrinfo(result);
+    sockaddr_in serverAddr;
+    serverAddr.sin_family = AF_INET;
+    serverAddr.sin_port = htons(port_);
+    serverAddr.sin_addr.s_addr = INADDR_ANY;
+
+    if (bind(sockfd_, (struct sockaddr*)&serverAddr, sizeof(serverAddr)) == SOCKET_ERROR) {
+        std::cerr << "Bind failed: " << WSAGetLastError() << "\n";
+        closesocket(sockfd_);
         WSACleanup();
-        exit(EXIT_FAILURE);
+        return;
     }
 
-    iResult = bind(server_socket, result->ai_addr, (int)result->ai_addrlen);
-    if (iResult == SOCKET_ERROR) {
-        std::cerr << "bind failed: " << WSAGetLastError() << std::endl;
-        freeaddrinfo(result);
-        closesocket(server_socket);
+    if (listen(sockfd_, SOMAXCONN) == SOCKET_ERROR) {
+        std::cerr << "Listen failed: " << WSAGetLastError() << "\n";
+        closesocket(sockfd_);
         WSACleanup();
-        exit(EXIT_FAILURE);
+        return;
     }
 
-    freeaddrinfo(result);
-
-    iResult = listen(server_socket, SOMAXCONN);
-    if (iResult == SOCKET_ERROR) {
-        std::cerr << "listen failed: " << WSAGetLastError() << std::endl;
-        closesocket(server_socket);
-        WSACleanup();
-        exit(EXIT_FAILURE);
-    }
+    std::cout << "Server is running...\n";
 
     while (true) {
-        SOCKET client_socket = accept(server_socket, NULL, NULL);
-        if (client_socket == INVALID_SOCKET) {
-            std::cerr << "accept failed: " << WSAGetLastError() << std::endl;
-            closesocket(server_socket);
-            WSACleanup();
-            exit(EXIT_FAILURE);
+        SOCKET clientSock = accept(sockfd_, NULL, NULL);
+        if (clientSock == INVALID_SOCKET) {
+            std::cerr << "Accept failed: " << WSAGetLastError() << "\n";
+            continue;
         }
 
-        std::thread client_thread(&Server::handle_client, this, client_socket);
-        client_thread.detach();
+        clientSocks_.push_back(clientSock); // Store the client socket
+
+        std::cout << "Client connected.\n";
+
+        std::thread clientThread(&Server::HandleClient, this, clientSock);
+        clientThread.detach();
     }
 }
 
-void Server::handle_client(SOCKET client_socket) {
-    char buffer[1024] = { 0 };
-    int valread;
-    while ((valread = recv(client_socket, buffer, 1024, 0)) > 0) {
-        send(client_socket, buffer, valread, 0);
+// Handle communication with a client
+void Server::HandleClient(SOCKET clientSock) {
+    char buffer[513];  // Increase buffer size to 513 to make room for the null-terminator
+    std::string partialMessage = "";
+    while (true) {
+        int bytesReceived = recv(clientSock, buffer, sizeof(buffer) - 1, 0);
+        if (bytesReceived > 0) {
+            buffer[bytesReceived] = '\0';  // Null-terminate received data
+            partialMessage += buffer;
+
+            // Check for newline character to process a complete message
+            size_t newlinePos = partialMessage.find('\n');
+            while (newlinePos != std::string::npos) {
+                std::string message = partialMessage.substr(0, newlinePos);
+                partialMessage = partialMessage.substr(newlinePos + 1);
+                std::cout << "Received from client: " << message << "\n";
+
+                // Broadcast the received message to all clients (except the sender)
+                BroadcastMessage(clientSock, message.c_str());
+
+                // Check for more complete messages in the remaining data
+                newlinePos = partialMessage.find('\n');
+            }
+        }
+        else if (bytesReceived == 0) {
+            std::cout << "Client disconnected.\n";
+
+            // Remove the client socket from the list
+            for (auto it = clientSocks_.begin(); it != clientSocks_.end(); ++it) {
+                if (*it == clientSock) {
+                    clientSocks_.erase(it);
+                    break;
+                }
+            }
+
+            closesocket(clientSock);
+            break;
+        }
+        else {
+            std::cerr << "recv failed: " << WSAGetLastError() << "\n";
+            closesocket(clientSock);
+            break;
+        }
     }
-    closesocket(client_socket);
+}
+
+// Broadcast a message to all connected clients (except the sender)
+void Server::BroadcastMessage(SOCKET senderSock, const char* message) {
+    std::string messageWithNewline = std::string(message) + "\n"; // Add a newline character
+    for (SOCKET clientSock : clientSocks_) {
+        if (clientSock != senderSock) {
+            send(clientSock, messageWithNewline.c_str(), messageWithNewline.size(), 0);
+        }
+    }
 }

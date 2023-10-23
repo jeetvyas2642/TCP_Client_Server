@@ -27,6 +27,9 @@
     <ClInclude Include="Header\Server.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="Header\Utility.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="Sources\Buffer.cpp">
@@ -41,7 +44,10 @@
     <ClCompile Include="Sources\Server.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="Main.cpp">
+    <ClCompile Include="Sources\Utility.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Sources\Main.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
   </ItemGroup>

@@ -1,14 +1,17 @@
-#pragma once
-#include <winsock2.h>
-#include <ws2tcpip.h>
+#ifndef PROTOCOL_H
+#define PROTOCOL_H
+
 #include "Buffer.h"
-#pragma comment(lib, "Ws2_32.lib")
+#include <string>
+#include <vector>
 
 class Protocol {
 public:
-    void send_message(SOCKET socket, const std::string& message);
-    std::string receive_message(SOCKET socket);
+    // Serialize a message into a vector of characters
+    static std::vector<char> SerializeMessage(const std::string& message);
 
-private:
-    Buffer buffer_;
+    // Deserialize a message from a buffer
+    static std::string DeserializeMessage(Buffer& buffer);
 };
+
+#endif // PROTOCOL_H
